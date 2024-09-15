@@ -2,13 +2,10 @@ const defaultPeople = ["Albert Einstein", "Elizabeth II", "Leonardo da Vinci"];
 const defaultLifeExpectancy = 76; // Default life expectancy if country-specific data is unavailable
 
 async function getCountryLifeExpectancy(country) {
-    // This is a placeholder function. In a real-world scenario, you'd use an API or database to fetch this data.
-    // For now, we'll return some sample data
     const lifeExpectancies = {
         "United States": 78.5,
         "United Kingdom": 81.2,
         "Japan": 84.3,
-        // Add more countries as needed
     };
     return lifeExpectancies[country] || defaultLifeExpectancy;
 }
@@ -19,7 +16,6 @@ async function getSuggestions() {
     const query = searchInput.value;
     const suggestionsList = document.getElementById('suggestions');
 
-    // Clear suggestions if no input
     if (!query) {
         suggestionsList.innerHTML = '';
         return;
@@ -31,14 +27,11 @@ async function getSuggestions() {
         const response = await fetch(url);
         const data = await response.json();
 
-        // Clear previous suggestions
         suggestionsList.innerHTML = '';
-
-        // Display suggestions in a dropdown
         data[1].forEach((suggestion) => {
             const listItem = document.createElement('li');
             listItem.textContent = suggestion;
-            listItem.onclick = () => searchWikipedia(suggestion); // When clicked, search for this suggestion
+            listItem.onclick = () => searchWikipedia(suggestion);
             suggestionsList.appendChild(listItem);
         });
 
@@ -47,11 +40,13 @@ async function getSuggestions() {
     }
 }
 
-// Search Wikipedia for selected suggestion and fetch birthday
+// Updated regex patterns
+const birthDeathRangeRegex = /(?:\(([^()]+)\);?\s*)?(\d{1,2}\s\w+\s\d{4})\s*(?:[-–]\s*(\d{1,2}\s\w+\s\d{4}))?/i;
+const birthRegex = /(?:born\s*)?(\d{1,2}\s\w+\s\d{4})/i;
+const deathRegex = /(?:died\s*)?(\d{1,2}\s\w+\s\d{4})/i;
+
 async function searchWikipedia(name) {
     const suggestionsList = document.getElementById('suggestions');
-
-    // Clear suggestions
     suggestionsList.innerHTML = '';
 
     const url = `https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&prop=extracts|pageprops|pageimages&piprop=thumbnail&pithumbsize=100&explaintext&titles=${encodeURIComponent(name)}`;
@@ -61,40 +56,61 @@ async function searchWikipedia(name) {
         const data = await response.json();
 
         const pages = data.query.pages;
-        const pageId = Object.keys(pages)[0]; // Get the first page ID
+        const pageId = Object.keys(pages)[0];
         const page = pages[pageId];
 
         if (page.missing) {
-            alert('No results found!');
+            promptManualEntry(name);
             return;
         }
 
-        // Extract the birthday from the extract or page props
-        const birthdayRegex = /born.*?(\d{1,2}\s\w+\s\d{4})/i;
         const extract = page.extract;
-        const match = birthdayRegex.exec(extract);
+        const thumbnail = page.thumbnail ? page.thumbnail.source : 'https://via.placeholder.com/50';
 
-        const thumbnail = page.thumbnail ? page.thumbnail.source : 'https://via.placeholder.com/50'; // Default image if no thumbnail
-
+        // Handle cases like: "Elizabeth II (Elizabeth Alexandra Mary; 21 April 1926 – 8 September 2022)"
+        const match = birthDeathRangeRegex.exec(extract);
+        let alias, birthday, deathday;
         if (match) {
-            const birthday = new Date(match[1]);
-            const deathRegex = /died.*?(\d{1,2}\s\w+\s\d{4})/i;
-            const deathMatch = deathRegex.exec(extract);
-            const deathday = deathMatch ? new Date(deathMatch[1]) : null;
-
-            // Get country (this is a simplified approach, you might need a more robust method)
-            const countryRegex = /(?:born|raised) in ([^,.]+)/i;
-            const countryMatch = countryRegex.exec(extract);
-            const country = countryMatch ? countryMatch[1].trim() : "Unknown";
-
-            const lifeExpectancy = await getCountryLifeExpectancy(country);
-            
-            addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy);
+            alias = match[1] ? match[1].trim() : null;
+            birthday = new Date(match[2]);
+            deathday = match[3] ? new Date(match[3]) : null;
         } else {
-            alert('Birthday not found in the Wikipedia entry!');
+            const birthMatch = birthRegex.exec(extract);
+            birthday = birthMatch ? new Date(birthMatch[1]) : null;
+
+            const deathMatch = deathRegex.exec(extract);
+            deathday = deathMatch ? new Date(deathMatch[1]) : null;
+        }
+
+        const countryRegex = /(?:born|raised) in ([^,.]+)/i;
+        const countryMatch = countryRegex.exec(extract);
+        const country = countryMatch ? countryMatch[1].trim() : "Unknown";
+
+        const lifeExpectancy = await getCountryLifeExpectancy(country);
+
+        if (!birthday) {
+            promptManualEntry(name, thumbnail, country, lifeExpectancy);
+        } else {
+            addPerson(alias ? `${name} (${alias})` : name, birthday, deathday, thumbnail, country, lifeExpectancy);
         }
     } catch (error) {
         console.error('Error fetching data:', error);
+        promptManualEntry(name);
+    }
+}
+
+// Prompt the user for manual birthday and optional death date entry
+function promptManualEntry(name, thumbnail = 'https://via.placeholder.com/50', country = "Unknown", lifeExpectancy = defaultLifeExpectancy) {
+    const manualBirthday = prompt(`Could not find a birthday for ${name}. Please enter the birthday (e.g., May 29, 1917):`);
+    const manualDeathday = prompt(`If ${name} has passed away, enter the death date (e.g., November 22, 1963), or leave blank if they are still alive:`);
+
+    if (manualBirthday) {
+        const birthday = new Date(manualBirthday);
+        const deathday = manualDeathday ? new Date(manualDeathday) : null;
+
+        addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy);
+    } else {
+        alert(`Birthday is required to add ${name}!`);
     }
 }
 
@@ -121,8 +137,7 @@ function addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy)
 
     const currentDate = new Date();
     const age = currentDate.getFullYear() - birthday.getFullYear();
-    
-    // Use default life expectancy if country is unknown
+
     if (country === "Unknown") {
         lifeExpectancy = defaultLifeExpectancy;
     }
@@ -135,7 +150,7 @@ function addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy)
     } else {
         const predictedDeathday = new Date(birthday.getTime());
         predictedDeathday.setFullYear(birthday.getFullYear() + Math.ceil(lifeExpectancy));
-        
+
         deathdayElem = document.createElement('p');
         deathdayElem.textContent = `Predicted death: ${predictedDeathday.toDateString()}`;
         infoDiv.appendChild(deathdayElem);
@@ -144,7 +159,6 @@ function addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy)
         remainingTimeElem.className = 'remaining-time';
         infoDiv.appendChild(remainingTimeElem);
 
-        // Update remaining time every second
         setInterval(() => {
             const now = new Date();
             const timeLeft = predictedDeathday.getTime() - now.getTime();
@@ -175,13 +189,14 @@ function addPerson(name, birthday, deathday, thumbnail, country, lifeExpectancy)
     progressBarInner.className = 'progress-bar-inner';
 
     const lifePercentage = deathday ? 100 : (age / lifeExpectancy) * 100;
-
     progressBarInner.style.width = `${Math.min(lifePercentage, 100)}%`;
     progressBar.appendChild(progressBarInner);
 
     personDiv.appendChild(progressBar);
     peopleContainer.appendChild(personDiv);
-}// Initialize default people
+}
+
+// Initialize default people
 function initializeDefaults() {
     defaultPeople.forEach(person => searchWikipedia(person));
 }
